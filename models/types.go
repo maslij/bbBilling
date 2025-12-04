@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"strconv"
+	"time"
+)
 
 // License validation structures
 type LicenseValidationRequest struct {
@@ -30,8 +34,19 @@ type EntitlementCheckResponse struct {
 	ValidUntil     time.Time `json:"valid_until"`
 }
 
-// Usage reporting structures
+// UsageEvent represents a usage event for storage
 type UsageEvent struct {
+	TenantID   string          `json:"tenant_id"`
+	EventType  string          `json:"event_type"`
+	ResourceID string          `json:"resource_id"`
+	Quantity   float64         `json:"quantity"`
+	Unit       string          `json:"unit"`
+	EventTime  time.Time       `json:"event_time"`
+	Metadata   json.RawMessage `json:"metadata"`
+}
+
+// UsageEventLegacy is the legacy format from C++ client with flexible event_time
+type UsageEventLegacy struct {
 	TenantID   string                 `json:"tenant_id"`
 	EventType  string                 `json:"event_type"`
 	ResourceID string                 `json:"resource_id"`
@@ -41,8 +56,69 @@ type UsageEvent struct {
 	Metadata   map[string]interface{} `json:"metadata"`
 }
 
+// FlexibleTime handles time that may come as Unix timestamp string or RFC3339
+type FlexibleTime struct {
+	time.Time
+}
+
+func (ft *FlexibleTime) UnmarshalJSON(data []byte) error {
+	// Remove quotes if present
+	s := string(data)
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		s = s[1 : len(s)-1]
+	}
+
+	// Try parsing as Unix timestamp (seconds)
+	if ts, err := strconv.ParseInt(s, 10, 64); err == nil {
+		ft.Time = time.Unix(ts, 0)
+		return nil
+	}
+
+	// Try RFC3339
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		ft.Time = t
+		return nil
+	}
+
+	// Try RFC3339Nano
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		ft.Time = t
+		return nil
+	}
+
+	// Try other formats
+	formats := []string{
+		"2006-01-02T15:04:05Z",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	}
+
+	for _, format := range formats {
+		if t, err := time.Parse(format, s); err == nil {
+			ft.Time = t
+			return nil
+		}
+	}
+
+	// Default to current time if all parsing fails
+	ft.Time = time.Now()
+	return nil
+}
+
+// UsageEventInput is the input format from C++ client with flexible event_time
+type UsageEventInput struct {
+	TenantID   string                 `json:"tenant_id"`
+	EventType  string                 `json:"event_type"`
+	ResourceID string                 `json:"resource_id"`
+	Quantity   float64                `json:"quantity"`
+	Unit       string                 `json:"unit"`
+	EventTime  FlexibleTime           `json:"event_time"`
+	Metadata   map[string]interface{} `json:"metadata"`
+}
+
+// UsageBatchRequest is the input from clients
 type UsageBatchRequest struct {
-	Events []UsageEvent `json:"events"`
+	Events []UsageEventInput `json:"events"`
 }
 
 type UsageBatchResponse struct {
@@ -80,4 +156,3 @@ type StatsResponse struct {
 	ByType      map[string]int `json:"by_type"`
 	Tenants     int            `json:"tenants"`
 }
-
